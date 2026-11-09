@@ -1,4 +1,3 @@
-# Account email: brian.s.via@gmail.com
-TONAL_USERNAME=
-TONAL_PASSWORD=
-MCP_BEARER=
+TONAL_USERNAME=you@example.com
+TONAL_PASSWORD=your-tonal-password
+MCP_BEARER=generate-with-openssl-rand-hex-32

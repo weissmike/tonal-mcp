@@ -158,3 +158,171 @@ export function filterMovements(
     : movements;
   return matched.slice(0, limit);
 }
+
+/* ---------- Custom workout (write path) helpers ---------- */
+
+export type SetIn = {
+  movement_id: string;
+  block_number: number;
+  block_start: boolean;
+  set_group: number;
+  round: number;
+  repetition: number;
+  repetition_total: number;
+  weight_percentage?: number;
+  prescribed_reps?: number | null;
+  prescribed_duration?: number | null;
+  description?: string;
+};
+
+/** Tool-facing set -> Tonal API set. Nulls are omitted (Tonal rejects null optionals). */
+export function toApiSet(s: SetIn): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    movementId: s.movement_id,
+    blockNumber: s.block_number,
+    blockStart: s.block_start,
+    setGroup: s.set_group,
+    round: s.round,
+    repetition: s.repetition,
+    repetitionTotal: s.repetition_total,
+    weightPercentage: Math.round(s.weight_percentage ?? 100), // must be a JSON integer
+    dropSet: false,
+    burnout: false,
+    spotter: false,
+    eccentric: false,
+    chains: false,
+    flex: false,
+    warmUp: false,
+    description: s.description ?? "",
+  };
+  if (s.prescribed_reps != null) out.prescribedReps = s.prescribed_reps;
+  if (s.prescribed_duration != null) out.prescribedDuration = s.prescribed_duration;
+  return out;
+}
+
+/** Tonal API set -> tool-facing set (round-trips straight back into update_workout). */
+export function fromApiSet(raw: Record<string, unknown>) {
+  return {
+    movement_id: String(raw.movementId ?? ""),
+    prescribed_reps: num(raw.prescribedReps) ?? null,
+    prescribed_duration: num(raw.prescribedDuration) ?? null,
+    weight_percentage: num(raw.weightPercentage) ?? 100,
+    block_number: num(raw.blockNumber) ?? 0,
+    block_start: Boolean(raw.blockStart),
+    set_group: num(raw.setGroup) ?? 1,
+    round: num(raw.round) ?? 1,
+    repetition: num(raw.repetition) ?? 1,
+    repetition_total: num(raw.repetitionTotal) ?? 1,
+    description: str(raw.description) ?? "",
+  };
+}
+
+const minutes = (seconds: unknown): number | null =>
+  typeof seconds === "number" && Number.isFinite(seconds) ? Math.round(seconds / 6) / 10 : null;
+
+export function summarizeUserWorkout(raw: Record<string, unknown>) {
+  return {
+    id: String(raw.id ?? ""),
+    title: String(raw.title ?? ""),
+    publish_state: String(raw.publishState ?? ""),
+    duration_min: minutes(raw.duration),
+    movement_count: Array.isArray(raw.movementIds) ? raw.movementIds.length : 0,
+    created_at: str(raw.createdAt) ?? null,
+  };
+}
+
+export function detailUserWorkout(raw: Record<string, unknown>) {
+  return {
+    id: String(raw.id ?? ""),
+    title: String(raw.title ?? ""),
+    description: str(raw.description) ?? "",
+    publish_state: String(raw.publishState ?? ""),
+    duration_min: minutes(raw.duration),
+    sets: (Array.isArray(raw.sets) ? raw.sets : []).map((s) => fromApiSet((s ?? {}) as Record<string, unknown>)),
+  };
+}
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+type CatalogMovement = {
+  id: string; name: string; muscleGroups?: string[]; bodyRegion?: string; pushPull?: string;
+  family?: string; onMachine?: boolean; inFreeLift?: boolean; skillLevel?: number; isGeneric?: boolean;
+};
+
+const catalogEntry = (m: CatalogMovement) => ({
+  id: m.id,
+  name: m.name,
+  muscle_groups: m.muscleGroups ?? [],
+  body_region: m.bodyRegion ?? "",
+  push_pull: m.pushPull ?? "",
+  family: m.family ?? "",
+  on_machine: m.onMachine ?? false,
+  in_free_lift: m.inFreeLift ?? false,
+  skill_level: m.skillLevel ?? 0,
+  is_generic: Boolean(m.isGeneric),
+});
+
+export function listExercises(
+  all: CatalogMovement[],
+  f: { muscle_group?: string; body_region?: string; push_pull?: string; family?: string;
+       on_machine?: boolean; query?: string; limit?: number },
+) {
+  let r = all;
+  if (f.muscle_group) { const t = f.muscle_group.toLowerCase(); r = r.filter((m) => (m.muscleGroups ?? []).some((g) => g.toLowerCase() === t)); }
+  if (f.body_region) r = r.filter((m) => (m.bodyRegion ?? "").toLowerCase() === f.body_region!.toLowerCase());
+  if (f.push_pull) r = r.filter((m) => (m.pushPull ?? "").toLowerCase() === f.push_pull!.toLowerCase());
+  if (f.family) r = r.filter((m) => (m.family ?? "").toLowerCase() === f.family!.toLowerCase());
+  if (f.on_machine !== undefined) r = r.filter((m) => m.onMachine === f.on_machine);
+  if (f.query) { const t = norm(f.query); r = r.filter((m) => norm(m.name).includes(t)); }
+  return r.slice(0, f.limit ?? 50).map(catalogEntry);
+}
+
+/** Ranked name lookup: exact > prefix > all-words > substring. */
+export function findMovement(all: CatalogMovement[], name: string, limit = 5) {
+  const q = norm(name);
+  const words = q.split(" ").filter(Boolean);
+  const scored = all.map((m) => {
+    const n = norm(m.name);
+    const score = n === q ? 4 : n.startsWith(q) ? 3 : words.length && words.every((w) => n.includes(w)) ? 2 : n.includes(q) ? 1 : 0;
+    return { m, score };
+  }).filter((x) => x.score > 0);
+  scored.sort((a, b) => b.score - a.score || a.m.name.length - b.m.name.length);
+  return scored.slice(0, limit).map(({ m, score }) => ({
+    movement_id: m.id, name: m.name, on_machine: m.onMachine ?? false, match: ["", "substring", "all_words", "prefix", "exact"][score],
+  }));
+}
+
+/* ---------- Schedule / calendar ---------- */
+
+export function summarizeCalendar(raw: unknown, from?: string, to?: string, includeRecommendations = false) {
+  const days = Array.isArray((raw as { dailySchedules?: unknown })?.dailySchedules)
+    ? ((raw as { dailySchedules: unknown[] }).dailySchedules)
+    : [];
+  return days
+    .map((d) => {
+      const day = (d ?? {}) as Record<string, unknown>;
+      const tiles = Array.isArray(day.tiles) ? day.tiles : [];
+      const items = tiles
+        .map((t) => {
+          const x = (t ?? {}) as Record<string, unknown>;
+          return {
+            signup_id: str(x.workoutSignupId) ?? null,
+            type: str(x.type) ?? "",
+            title: str(x.title) ?? "",
+            duration_min: typeof x.duration === "number" ? Math.round(x.duration / 6) / 10 : null,
+            completed: Boolean(x.completed),
+            workout_id: str(x.workoutId) ?? null,
+            target_area: str(x.targetArea) ?? null,
+            level: str(x.level) ?? null,
+          };
+        })
+        .filter((w) => includeRecommendations || w.signup_id !== null || w.completed || w.type.startsWith("DAILY_LIFT"));
+      return {
+        date: String(day.date ?? "").slice(0, 10),
+        recommendation_type: includeRecommendations ? (str(day.recommendationType) ?? null) : undefined,
+        workouts: items,
+      };
+    })
+    .filter((d) => (!from || d.date >= from) && (!to || d.date <= to))
+    .filter((d) => includeRecommendations || d.workouts.length > 0);
+}

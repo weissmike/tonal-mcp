@@ -1,6 +1,9 @@
 node_modules/
 .wrangler/
 .dev.vars
-CODEX-LAST.md
 dist/
 wrangler.local.jsonc
+*.log
+.env
+.env.*
+token*.txt

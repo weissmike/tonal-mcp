@@ -8,5 +8,9 @@
     "bindings": [{ "name": "TONAL_SESSION", "class_name": "TonalSession" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TonalSession"] }],
+  // Create with: npx wrangler kv namespace create OAUTH_KV   (paste the id below)
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "<your-oauth-kv-id>" }],
+  // Public origin of this Worker; must match the custom domain route below.
+  "define": { "__ORIGIN__": "\"https://tonal.example.com\"" },
   "routes": [{ "pattern": "tonal.example.com", "custom_domain": true }]
 }

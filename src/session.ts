@@ -14,6 +14,12 @@ export type Movement = {
   shortName?: string;
   muscleGroups?: string[];
   bodyRegion?: string;
+  pushPull?: string;
+  family?: string;
+  onMachine?: boolean;
+  inFreeLift?: boolean;
+  skillLevel?: number;
+  isGeneric?: boolean;
 };
 
 /** Decode JWT exp (ms) without Node Buffer — Workers-safe. */
@@ -74,7 +80,7 @@ export class TonalSession extends DurableObject<Env> {
   }
 
   async getMovements(): Promise<Movement[]> {
-    const cached = await this.ctx.storage.get<Cached<Movement[]>>("movements");
+    const cached = await this.ctx.storage.get<Cached<Movement[]>>("movements2");
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const value = await this.api("/movements") as Array<Record<string, unknown>>;
     const slim: Movement[] = (Array.isArray(value) ? value : []).map((m) => ({
@@ -86,8 +92,14 @@ export class TonalSession extends DurableObject<Env> {
         : Array.isArray(m.muscle_groups) ? (m.muscle_groups as unknown[]).map(String) : undefined,
       bodyRegion: typeof m.bodyRegion === "string" ? m.bodyRegion
         : typeof m.body_region === "string" ? String(m.body_region) : undefined,
+      pushPull: typeof m.pushPull === "string" ? m.pushPull : undefined,
+      family: typeof m.family === "string" ? m.family : undefined,
+      onMachine: typeof m.onMachine === "boolean" ? m.onMachine : undefined,
+      inFreeLift: typeof m.inFreeLift === "boolean" ? m.inFreeLift : undefined,
+      skillLevel: typeof m.skillLevel === "number" ? m.skillLevel : undefined,
+      isGeneric: typeof m.isGeneric === "boolean" ? m.isGeneric : undefined,
     }));
-    await this.ctx.storage.put("movements", { value: slim, expiresAt: Date.now() + 24 * 60 * 60_000 });
+    await this.ctx.storage.put("movements2", { value: slim, expiresAt: Date.now() + 24 * 60 * 60_000 });
     return slim;
   }
 
